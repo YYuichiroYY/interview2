@@ -1,0 +1,7 @@
+# requirements.txt
+Flask
+numpy
+janome
+sentence-transformers
+scikit-learn
+openai
