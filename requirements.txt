@@ -5,3 +5,4 @@ janome
 sentence-transformers
 scikit-learn
 openai
+python-dotenv
