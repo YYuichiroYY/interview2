@@ -8,11 +8,11 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from dotenv import load_dotenv
 
-# .env ファイルから環境変数を読み込み
+# .env ファイルから環境変数を読み込む
 load_dotenv()
 
 # Flask アプリの生成
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static")
 
 # ---------------------------
 # 1. JSONファイルから学習用カルテデータを読み込む
@@ -128,7 +128,6 @@ def diagnose():
 【過去カルテデータ】
 {similar_text}
 """
-
         # OpenAI API キーの取得
         openai_api_key = os.environ.get("OPENAI_API_KEY")
         if not openai_api_key:
@@ -177,6 +176,13 @@ def diagnose():
         return jsonify({"error": f"内部エラー: {str(e)}"}), 500
 
 # ---------------------------
-# Flask アプリの起動
+# 6. フロントエンド用のルート（静的ファイルとして index.html を返す）
+@app.route("/")
+def index():
+    return app.send_static_file("index.html")
+
+# ---------------------------
+# Flask アプリの起動（Render 用に PORT 環境変数を利用）
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
