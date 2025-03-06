@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from flask import Flask, request, jsonify
+import numpy as np
 from janome.tokenizer import Tokenizer
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -14,7 +15,7 @@ load_dotenv()
 app = Flask(__name__, static_folder="static")
 
 # ---------------------------
-# 1. JSONファイルからカルテデータの読み込み
+# 1. JSONファイルから学習用カルテデータを読み込む
 def load_json_file():
     try:
         json_file_path = os.path.join(os.path.dirname(__file__), "250226_JSON.txt")
@@ -45,99 +46,49 @@ if not sample_data:
     ]
 
 # ---------------------------
-# 2. 形態素解析によるトークン抽出（助詞を除外）
+# 2. 日本語用の単語抽出（Janome利用）
 tokenizer = Tokenizer()
 def extract_tokens(text):
-    tokens = []
-    for token in tokenizer.tokenize(text):
-        # 助詞を除外
-        if "助詞" in token.part_of_speech:
-            continue
-        base = token.base_form if token.base_form != "*" else token.surface
-        tokens.append(base.lower())
+    if not text:
+        return set()
+    tokens = tokenizer.tokenize(text, wakati=True)
+    tokens = [t.lower() for t in tokens]
     return set(tokens)
 
 # ---------------------------
-# 3. シノニム辞書の設定と拡張関数
-synonyms = {
-    "発熱": {"熱", "微熱", "高熱", "ねつ"},
-    "熱": {"発熱", "微熱", "高熱", "ねつ"},
-    "咳": {"咳嗽", "せき"},
-    "蕁麻疹": {"じんましん", "ぶつぶつ", "皮疹", "かゆみ"},
-    "嘔吐": {"嘔", "吐き気", "吐", "吐く"},
-    "下痢": {"下痢症", "下痢気味", "水様便"},
-    "腹痛": {"腹部痛", "お腹の痛み", "腹の痛み"},
-    "鼻汁": {"鼻水", "黄色い鼻", "透明の鼻"},
-    "咽頭痛": {"喉痛", "喉の痛み"},
-    "経口摂取不良": {"口から摂取できない", "摂食障害", "飲食困難"},
-    "持続": {"持続性", "続く", "長引く", "遷延"},
-    "腫脹": {"腫れ", "むくみ", "腫み"},
-    "意識消失": {"失神", "意識喪失", "気絶"},
-    "頭痛": {"頭が痛い", "偏頭痛", "片頭痛", "ヘッドエイク", "頭"}
-}
-
-def expand_tokens(tokens):
-    expanded = set(tokens)
-    for token in tokens:
-        if token in synonyms:
-            expanded |= synonyms[token]  # 同義語を追加
-    return expanded
-
-# ---------------------------
-# 4. SentenceTransformerの初期化と個別エンコード
+# 3. Sentence Transformer によるエンコーディング準備
+texts = [case.get("chief_complaint", "") for case in sample_data]
 model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# 各カルテの主訴と現病歴のリストを作成
-chief_texts = [case.get("chief_complaint", "") for case in sample_data]
-raw_texts   = [case.get("raw_text", "") for case in sample_data]
-
-# 個別にエンコード
-chief_embeddings = model.encode(chief_texts)
-raw_embeddings   = model.encode(raw_texts)
+embeddings = model.encode(texts)
 
 # ---------------------------
-# 5. 類似カルテ検索関数
-#    主訴80%、現病歴20%の重み付け、総合類似度閾値0.5、主訴部分の共通キーワードが1語以上必要
-def find_similar_cases(query, chief_embeddings, raw_embeddings, sample_data, top_k=5, threshold=0.5):
-    # クエリのエンコード
+# 4. 類似カルテ検索関数
+def find_similar_cases(query, embeddings, sample_data, top_k=3, cutoff=0.65, min_common_words=1):
     query_embedding = model.encode([query])
-    
-    # 主訴・現病歴それぞれの類似度計算
-    similarities_chief = cosine_similarity(query_embedding, chief_embeddings)[0]
-    similarities_raw   = cosine_similarity(query_embedding, raw_embeddings)[0]
+    similarities = cosine_similarity(query_embedding, embeddings)[0]
+    top_indices = np.argsort(similarities)[::-1][:min(top_k, len(similarities))]
+    query_tokens = extract_tokens(query)
     
     results = []
-    # クエリのトークン拡張
-    query_tokens = expand_tokens(extract_tokens(query))
-    
-    for idx, case in enumerate(sample_data):
-        sim_chief = similarities_chief[idx]
-        sim_raw   = similarities_raw[idx]
-        weighted_sim = 0.8 * sim_chief + 0.2 * sim_raw
-        
-        if weighted_sim < threshold:
+    for idx in top_indices:
+        sim_score = similarities[idx]
+        if sim_score < cutoff:
             continue
-        
-        # 主訴部分のトークン抽出とシノニム展開
-        candidate_tokens = expand_tokens(extract_tokens(case.get("chief_complaint", "")))
+        case = sample_data[idx]
+        candidate_text = case.get("chief_complaint", "") + " " + case.get("raw_text", "")
+        candidate_tokens = extract_tokens(candidate_text)
         common_tokens = query_tokens & candidate_tokens
-        
-        if len(common_tokens) < 1:
+        if len(common_tokens) < min_common_words:
             continue
-        
         results.append({
             "case": case,
-            "similarity_chief": sim_chief,
-            "similarity_raw": sim_raw,
-            "weighted_similarity": weighted_sim,
+            "similarity": sim_score,
             "common_tokens": list(common_tokens)
         })
-    
-    results = sorted(results, key=lambda x: x["weighted_similarity"], reverse=True)
-    return results[:top_k] if results else None
+    return results if results else None
 
 # ---------------------------
-# 6. 診断処理エンドポイント (/diagnose)
+# 5. 診断処理エンドポイント (/diagnose)
 @app.route("/diagnose", methods=["POST"])
 def diagnose():
     logging.info('診断処理関数が呼び出されました')
@@ -150,8 +101,8 @@ def diagnose():
         if not input_query:
             return jsonify({"error": "リクエストに 'symptom' キーが含まれていません"}), 400
         
-        # 類似カルテの検索（新しい抽出条件を使用）
-        similar_cases_info = find_similar_cases(input_query, chief_embeddings, raw_embeddings, sample_data, top_k=5, threshold=0.5)
+        # 類似カルテの検索
+        similar_cases_info = find_similar_cases(input_query, embeddings, sample_data, top_k=3, cutoff=0.65, min_common_words=1)
         
         if similar_cases_info is None:
             similar_text = "該当する過去カルテはありません。"
@@ -159,15 +110,17 @@ def diagnose():
             similar_text = ""
             for info in similar_cases_info:
                 case = info["case"]
+                sim_score = info["similarity"]
+                common_tokens = info["common_tokens"]
                 similar_text += f"【カルテID: {case.get('case_id', 'ID不明')}】\n"
                 similar_text += f"主訴: {case.get('chief_complaint', '主訴なし')}\n"
-                similar_text += f"現病歴: {case.get('raw_text', '現病歴なし')}\n"
-                similar_text += f"重み付き類似度: {info['weighted_similarity']:.2f}\n"
-                similar_text += f"共通キーワード（主訴部分）: {', '.join(info['common_tokens'])}\n\n"
+                similar_text += f"カルテ内容: {case.get('raw_text', 'カルテ内容なし')}\n"
+                similar_text += f"類似度: {sim_score:.2f}\n"
+                similar_text += f"共通単語: {', '.join(common_tokens)}\n\n"
         
         # プロンプトの作成
         prompt = f"""あなたは小児科専門医です。{input_query}という主訴の患児が来院しました。
-以下は、今回の主訴と類似性が高い主訴で来院した過去の患者のカルテデータです。これらのカルテデータを参考に、以下の指示に従って患者に問診すべき項目を作成してください。
+以下は、今回の主訴と類似性が高い主訴で来院した過去の患者のカルテデータ３つです。これらのカルテデータを参考に、以下の指示に従って患者に問診すべき項目を作成してください。
 【指示】
 目的：今回の症例に必要な情報を、過去のカルテデータに共通して見られる項目を中心に、漏れなく集められるようにすること。
 出力形式：実際に患者さんやその保護者に直接尋ねることができるシンプルかつ明確な質問文で提示する。
@@ -183,8 +136,8 @@ def diagnose():
                 "いつから症状が始まりましたか？",
                 "症状の強さはどの程度ですか？",
                 "以前にも同様の症状はありましたか？",
-                "症状が出る状況や時間帯に特徴はありますか？",
-                "現在使用している薬は何ですか？"
+                "症状が起きる時間帯や状況に特徴はありますか？",
+                "現在服用している薬はありますか？"
             ]
             result = {
                 "symptom": input_query,
@@ -193,8 +146,9 @@ def diagnose():
                 "note": "OpenAI APIキーが設定されていないため、モックデータを返しています"
             }
             return jsonify(result), 200
-        
-        # OpenAI SDK を用いた問診項目生成リクエスト
+
+        # ---------------------------
+        # 新しい OpenAI SDK のインターフェースを使用して生成AIへリクエスト
         from openai import OpenAI
         client = OpenAI(api_key=openai_api_key)
         
@@ -209,6 +163,7 @@ def diagnose():
         )
         generated_text = response.choices[0].message.content.strip()
         
+        # レスポンス結果の作成
         result = {
             "symptom": input_query,
             "similar_cases": similar_text,
@@ -221,13 +176,13 @@ def diagnose():
         return jsonify({"error": f"内部エラー: {str(e)}"}), 500
 
 # ---------------------------
-# フロントエンド用のルート（静的ファイルとして index.html を返す）
+# 6. フロントエンド用のルート（静的ファイルとして index.html を返す）
 @app.route("/")
 def index():
     return app.send_static_file("index.html")
 
 # ---------------------------
-# Flask アプリの起動（PORT環境変数がある場合はその値、なければ5000番ポート）
+# Flask アプリの起動（Render 用に PORT 環境変数を利用）
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
