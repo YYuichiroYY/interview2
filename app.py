@@ -153,7 +153,7 @@ def diagnose():
         client = OpenAI(api_key=openai_api_key)
         
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "あなたは小児科専門医です。"},
                 {"role": "user", "content": prompt}
