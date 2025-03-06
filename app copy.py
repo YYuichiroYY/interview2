@@ -155,7 +155,7 @@ def diagnose():
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "あなたは小児アレルギー専門医です。"},
+                {"role": "system", "content": "あなたは小児科専門医です。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
