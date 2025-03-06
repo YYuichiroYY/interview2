@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 # .env ファイルから環境変数を読み込む
 load_dotenv()
 
-# Flask アプリの生成
+# Flask アプリの生成（静的ファイルは "static" フォルダ内）
 app = Flask(__name__, static_folder="static")
 
 # ---------------------------
@@ -20,11 +20,9 @@ def load_json_file():
     try:
         json_file_path = os.path.join(os.path.dirname(__file__), "250226_JSON.txt")
         logging.info(f"JSONファイルの読み込みを試みます: {json_file_path}")
-        
         if not os.path.exists(json_file_path):
             logging.error(f"ファイルが存在しません: {json_file_path}")
             return []
-        
         with open(json_file_path, 'r', encoding='utf-8') as f:
             content = f.read().strip()
             if content.startswith('\ufeff'):
@@ -97,13 +95,13 @@ def diagnose():
         if not req_body:
             return jsonify({"error": "JSON形式のリクエストを送ってください"}), 400
         
+        # フロントエンドから送られてくる入力を「困りごと」として扱う
         input_query = req_body.get("symptom")
         if not input_query:
             return jsonify({"error": "リクエストに 'symptom' キーが含まれていません"}), 400
         
         # 類似カルテの検索
         similar_cases_info = find_similar_cases(input_query, embeddings, sample_data, top_k=3, cutoff=0.65, min_common_words=1)
-        
         if similar_cases_info is None:
             similar_text = "該当する過去カルテはありません。"
         else:
@@ -118,37 +116,34 @@ def diagnose():
                 similar_text += f"類似度: {sim_score:.2f}\n"
                 similar_text += f"共通単語: {', '.join(common_tokens)}\n\n"
         
-        # プロンプトの作成
-        prompt = f"""あなたは小児科専門医です。{input_query}という主訴の患児が来院しました。
-以下は、今回の主訴と類似性が高い主訴で来院した過去の患者のカルテデータ３つです。これらのカルテデータを参考に、以下の指示に従って患者に問診すべき項目を作成してください。
-【指示】
-目的：今回の症例に必要な情報を、過去のカルテデータに共通して見られる項目を中心に、漏れなく集められるようにすること。
-出力形式：実際に患者さんやその保護者に直接尋ねることができるシンプルかつ明確な質問文で提示する。
-質問項目の数：最低5項目、必要に応じて最大10項目まで作成する。
-【過去カルテデータ】
-{similar_text}
+        # プロンプトの作成：入力された困りごとをもとに、以下の質問に回答する形で問診項目を作成する
+        prompt = f"""あなたは小児科専門医です。{input_query}という困りごとがある患者が来院しました。
+以下の質問に回答してください：
+1. 今日の食事内容について教えてください。特に、新しく食べたものやアレルギーがある食べ物はありますか？
+2. 症状が出現する前に食べたものや摂取したものがあれば教えてください。
+3. 過去にアレルギー反応が出た食べ物があれば教えてください。
+4. 現在、他に体に異常を感じている症状はありますか？
+5. 今回の症状が出現する前に、最後に摂取した食事からの時間を教えてください。
 """
         # OpenAI API キーの取得
         openai_api_key = os.environ.get("OPENAI_API_KEY")
         if not openai_api_key:
             logging.warning("OpenAI APIキーが設定されていません。モックレスポンスを返します。")
-            mock_questions = [
-                "いつから症状が始まりましたか？",
-                "症状の強さはどの程度ですか？",
-                "以前にも同様の症状はありましたか？",
-                "症状が起きる時間帯や状況に特徴はありますか？",
-                "現在服用している薬はありますか？"
-            ]
-            result = {
+            generated_questions = (
+                "以下の質問に回答してください：\n"
+                "1. 今日の食事内容について教えてください。特に、新しく食べたものやアレルギーがある食べ物はありますか？\n"
+                "2. 症状が出現する前に食べたものや摂取したものがあれば教えてください。\n"
+                "3. 過去にアレルギー反応が出た食べ物があれば教えてください。\n"
+                "4. 現在、他に体に異常を感じている症状はありますか？\n"
+                "5. 今回の症状が出現する前に、最後に摂取した食事からの時間を教えてください。"
+            )
+            return jsonify({
                 "symptom": input_query,
                 "similar_cases": similar_text,
-                "diagnosis": mock_questions,
-                "note": "OpenAI APIキーが設定されていないため、モックデータを返しています"
-            }
-            return jsonify(result), 200
+                "diagnosis": generated_questions
+            }), 200
 
-        # ---------------------------
-        # 新しい OpenAI SDK のインターフェースを使用して生成AIへリクエスト
+        # 新しい OpenAI SDK を使って生成AIへリクエスト
         from openai import OpenAI
         client = OpenAI(api_key=openai_api_key)
         
@@ -163,13 +158,12 @@ def diagnose():
         )
         generated_text = response.choices[0].message.content.strip()
         
-        # レスポンス結果の作成
-        result = {
+        # 最終出力は、入力された困りごとと、生成された問診項目、そして【類似カルテデータ】の順にまとめる
+        return jsonify({
             "symptom": input_query,
-            "similar_cases": similar_text,
-            "diagnosis": generated_text
-        }
-        return jsonify(result), 200
+            "diagnosis": generated_text,
+            "similar_cases": similar_text
+        }), 200
         
     except Exception as e:
         logging.error(f"エラー発生: {str(e)}")
