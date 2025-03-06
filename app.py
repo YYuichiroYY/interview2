@@ -95,7 +95,7 @@ def diagnose():
         if not req_body:
             return jsonify({"error": "JSON形式のリクエストを送ってください"}), 400
         
-        # ここでは、フロントエンドから送られてくる入力を「困りごと」として扱う
+        # フロントエンドから送られてくる入力を「困りごと」として扱う
         input_query = req_body.get("symptom")
         if not input_query:
             return jsonify({"error": "リクエストに 'symptom' キーが含まれていません"}), 400
@@ -123,7 +123,7 @@ def diagnose():
 2. 症状が出現する前に食べたものや摂取したものがあれば教えてください。
 3. 過去にアレルギー反応が出た食べ物があれば教えてください。
 4. 現在、他に体に異常を感じている症状はありますか？
-5. 今回の症状が出現する前に、最後に摂取した食事からの時間を教えてください.
+5. 今回の症状が出現する前に、最後に摂取した食事からの時間を教えてください。
 """
         # OpenAI API キーの取得
         openai_api_key = os.environ.get("OPENAI_API_KEY")
@@ -137,15 +137,16 @@ def diagnose():
                 "4. 現在、他に体に異常を感じている症状はありますか？\n"
                 "5. 今回の症状が出現する前に、最後に摂取した食事からの時間を教えてください。"
             )
-            final_output = f"主訴: {input_query}\n{generated_questions}\n【類似カルテデータ】\n{similar_text}"
-            return jsonify({"result": final_output}), 200
+            return jsonify({
+                "symptom": input_query,
+                "similar_cases": similar_text,
+                "diagnosis": generated_questions
+            }), 200
 
-        # ---------------------------
-        # 新しい OpenAI SDK のインターフェースを使用して生成AIへリクエスト
+        # 新しい OpenAI SDK を使って生成AIへリクエスト
         from openai import OpenAI
         client = OpenAI(api_key=openai_api_key)
         
-        # ここで、プロンプトに続けて、上記質問を生成するよう指示
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -157,9 +158,12 @@ def diagnose():
         )
         generated_text = response.choices[0].message.content.strip()
         
-        # 最終的な出力は、入力された困りごとと、生成された質問（問診項目）と、類似カルテデータの順に表示
-        final_output = f"主訴: {input_query}\n{generated_text}\n【類似カルテデータ】\n{similar_text}"
-        return jsonify({"result": final_output}), 200
+        # 最終出力は、入力された困りごとと、生成された問診項目、そして【類似カルテデータ】の順にまとめる
+        return jsonify({
+            "symptom": input_query,
+            "diagnosis": generated_text,
+            "similar_cases": similar_text
+        }), 200
         
     except Exception as e:
         logging.error(f"エラー発生: {str(e)}")

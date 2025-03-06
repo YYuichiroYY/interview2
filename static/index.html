@@ -12,7 +12,7 @@
 <body>
   <div class="container">
     <h1>問診自動化 アプリ</h1>
-    <!-- 主訴入力フォーム -->
+    <!-- 困りごと入力フォーム -->
     <form id="diagnoseForm">
       <label for="symptom">困りごとを入力してください:</label>
       <input type="text" id="symptom" name="symptom" placeholder="例：昨日からの発熱、今朝からの嘔吐" required>
@@ -22,16 +22,14 @@
   </div>
 
   <script>
-    // フォームが送信されたときの処理
     document.getElementById('diagnoseForm').addEventListener('submit', async (e) => {
-      e.preventDefault(); // ページリロードを防ぐ
+      e.preventDefault();
       
       const symptom = document.getElementById('symptom').value;
       const resultDiv = document.getElementById('result');
       resultDiv.innerText = "処理中...";
       
       try {
-        // バックエンドの /diagnose エンドポイントにPOSTリクエストを送信
         const response = await fetch('/diagnose', {
           method: 'POST',
           headers: {
@@ -41,7 +39,7 @@
         });
         const data = await response.json();
         if (response.ok) {
-          resultDiv.innerText = `主訴: ${data.symptom}\n\n【類似カルテデータ】\n${data.similar_cases}\n\n【問診項目】\n${data.diagnosis}`;
+          resultDiv.innerText = `主訴: ${data.symptom}\n\n【問診項目】\n${data.diagnosis}\n\n【類似カルテデータ】\n${data.similar_cases}`;
         } else {
           resultDiv.innerText = "エラー: " + JSON.stringify(data);
         }
