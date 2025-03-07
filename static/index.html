@@ -2,17 +2,18 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>問診自動化 アプリ</title>
+  <!-- タイトルを「問診の達人」に変更 -->
+  <title>問診の達人</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 2em; }
-    .container { max-width: 600px; margin: auto; text-align: center; }
+    .container { max-width: 600px; margin: auto; }
     label, input, button { display: block; width: 100%; margin-bottom: 1em; }
   </style>
 </head>
 <body>
   <div class="container">
-    <!-- テキストの見出しを画像に置き換え -->
-    <img src="{{ url_for('static', filename='images/your_image.jpg') }}" alt="問診自動化 アプリ" style="width:100%; max-width:600px; margin-bottom:1em;">
+    <!-- 見出しも「問診の達人」に変更 -->
+    <h1>問診の達人</h1>
     
     <!-- 困りごと入力フォーム -->
     <form id="diagnoseForm">
